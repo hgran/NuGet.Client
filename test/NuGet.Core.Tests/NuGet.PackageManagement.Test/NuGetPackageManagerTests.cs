@@ -21,6 +21,8 @@ using System.Xml.Linq;
 using Test.Utility;
 using Xunit;
 using Strings = NuGet.ProjectManagement.Strings;
+using NuGet.ProjectManagement;
+using System.Diagnostics;
 
 namespace NuGet.Test
 {
@@ -4441,42 +4443,6 @@ namespace NuGet.Test
             }
         }
 
-        [Fact]
-        public async Task ExecuteNuGetProjectActionsAsync_FailsIfThePackageTypeIsManaged()
-        {
-            await VerifyFailureForPackageTypes(new[] { new PackageType("Managed", new Version(2, 0)) });
-        }
-
-        [Fact]
-        public async Task ExecuteNuGetProjectActionsAsync_FailsIfThePackageTypeIsUnexpected()
-        {
-            await VerifyFailureForPackageTypes(new[] { new PackageType("Fake", new Version(1, 2)) });
-        }
-
-        [Fact]
-        public async Task ExecuteNuGetProjectActionsAsync_FailsIfThePackageTypeIsDotnetCliTool()
-        {
-            await VerifyFailureForPackageTypes(new[] { PackageType.DotnetCliTool });
-        }
-
-        [Fact]
-        public async Task ExecuteNuGetProjectActionsAsync_FailsIfThePackageTypeIsDependency()
-        {
-            await VerifyFailureForPackageTypes(new[] { PackageType.Dependency });
-        }
-
-        [Fact]
-        public async Task ExecuteNuGetProjectActionsAsync_FailsIfMultiplePackageTypes()
-        {
-            await VerifyFailureForPackageTypes(new[] { PackageType.Legacy, PackageType.Legacy });
-        }
-
-        [Fact]
-        public async Task ExecuteNuGetProjectActionsAsync_SucceedsIfThePackageTypeIsLegacy()
-        {
-            await VerifySuccessForPackageTypes(new[] { PackageType.Legacy });
-        }
-
         // [Fact]
         public async Task TestPacManUpdatePackagePreservePackagesConfigAttributes()
         {
@@ -4687,141 +4653,6 @@ namespace NuGet.Test
             var packageDependency = packageInfo.Dependencies.Single();
             Assert.Equal("b", packageDependency.Id);
             Assert.Equal(bVersionRange.ToString(), packageDependency.VersionRange.ToString());
-        }
-
-        private static async Task VerifyFailureForPackageTypes(IReadOnlyList<PackageType> packageTypes)
-        {
-            // Arrange
-            var packageSource = new Configuration.PackageSource("some source");
-            var packageSourceProvider = new TestPackageSourceProvider(new[] { packageSource });
-            var sourceRepositoryProvider = new SourceRepositoryProvider(
-                packageSourceProvider,
-                new[] { new Lazy<INuGetResourceProvider>(() => new TestDownloadResourceProvider(packageTypes)) });
-            var testSettings = Configuration.NullSettings.Instance;
-            using (var testSolutionManager = new TestSolutionManager(true))
-            {
-                var deleteOnRestartManager = new TestDeleteOnRestartManager();
-                var nugetProject = new TestNuGetProject(new Packaging.PackageReference[0]);
-
-                var nuGetPackageManager = new NuGetPackageManager(
-                    sourceRepositoryProvider,
-                    testSettings,
-                    testSolutionManager,
-                    deleteOnRestartManager);
-                var identity = new PackageIdentity("ManagedCodeConventions", NuGetVersion.Parse("1.0.0"));
-                var actions = new[] { NuGetProjectAction.CreateInstallProjectAction(identity, sourceRepositoryProvider.CreateRepository(packageSource)) };
-
-                // Act and Assert
-                var ex = await Assert.ThrowsAsync<MinClientVersionException>(() =>
-                    nuGetPackageManager.ExecuteNuGetProjectActionsAsync(
-                        nugetProject,
-                        actions,
-                        new TestNuGetProjectContext(),
-                        default(CancellationToken)));
-                Assert.Equal("Package 'ManagedCodeConventions 1.0.0' uses features that are not supported by the current version of NuGet. " +
-                    "To upgrade NuGet, see http://docs.nuget.org/consume/installing-nuget.", ex.Message);
-            }
-        }
-
-        private static async Task VerifySuccessForPackageTypes(IReadOnlyList<PackageType> packageTypes)
-        {
-            // Arrange
-            var packageSource = new Configuration.PackageSource("some source");
-            var packageSourceProvider = new TestPackageSourceProvider(new[] { packageSource });
-            var sourceRepositoryProvider = new SourceRepositoryProvider(
-                packageSourceProvider,
-                new[] { new Lazy<INuGetResourceProvider>(() => new TestDownloadResourceProvider(packageTypes)) });
-            var testSettings = Configuration.NullSettings.Instance;
-            using (var testSolutionManager = new TestSolutionManager(true))
-            {
-                var deleteOnRestartManager = new TestDeleteOnRestartManager();
-                var nugetProject = new TestNuGetProject(new Packaging.PackageReference[0]);
-
-                var nuGetPackageManager = new NuGetPackageManager(
-                    sourceRepositoryProvider,
-                    testSettings,
-                    testSolutionManager,
-                    deleteOnRestartManager);
-                var identity = new PackageIdentity("ManagedCodeConventions", NuGetVersion.Parse("1.0.0"));
-                var actions = new[] { NuGetProjectAction.CreateInstallProjectAction(identity, sourceRepositoryProvider.CreateRepository(packageSource)) };
-
-                // Act
-                await nuGetPackageManager.ExecuteNuGetProjectActionsAsync(
-                        nugetProject,
-                        actions,
-                        new TestNuGetProjectContext(),
-                        default(CancellationToken));
-
-                // No exception should be thrown.
-            }
-        }
-
-        private class TestDownloadResourceProvider : ResourceProvider
-        {
-            private readonly IReadOnlyList<PackageType> _packageTypes;
-
-            public TestDownloadResourceProvider(IReadOnlyList<PackageType> packageTypes)
-                : base(typeof(DownloadResource))
-            {
-                _packageTypes = packageTypes;
-            }
-
-            public override Task<Tuple<bool, INuGetResource>> TryCreate(SourceRepository source, CancellationToken token)
-            {
-                INuGetResource resource = new TestDownloadResource(_packageTypes);
-                return Task.FromResult(Tuple.Create(true, resource));
-            }
-        }
-
-        private class TestDownloadResource : DownloadResource
-        {
-            private readonly IReadOnlyList<PackageType> _packageTypes;
-
-            public TestDownloadResource(IReadOnlyList<PackageType> _packageTypes)
-            {
-                this._packageTypes = _packageTypes;
-            }
-
-            public override Task<DownloadResourceResult> GetDownloadResourceResultAsync(
-                PackageIdentity identity,
-                Configuration.ISettings settings,
-                Common.ILogger logger,
-                CancellationToken token)
-            {
-                var nuspecReader = new Mock<NuspecReader>(new XDocument());
-                var packageReader = new Mock<PackageReaderBase>(
-                    new FrameworkNameProvider(new[] { DefaultFrameworkMappings.Instance },
-                    new[] { DefaultPortableFrameworkMappings.Instance }))
-                {
-                    CallBase = true
-                };
-
-                packageReader
-                    .Setup(p => p.GetIdentity())
-                    .Returns(new PackageIdentity("ManagedCodeConventions", NuGetVersion.Parse("1.0.0")));
-                packageReader
-                    .Setup(p => p.GetMinClientVersion())
-                    .Returns(new NuGetVersion(2, 0, 0));
-                packageReader
-                    .Setup(p => p.GetPackageTypes())
-                    .Returns(_packageTypes);
-
-                nuspecReader
-                    .Setup(p => p.GetIdentity())
-                    .Returns(new PackageIdentity("ManagedCodeConventions", NuGetVersion.Parse("1.0.0")));
-                nuspecReader
-                    .Setup(p => p.GetMinClientVersion())
-                    .Returns(new NuGetVersion(2, 0, 0));
-                nuspecReader
-                    .Setup(p => p.GetPackageTypes())
-                    .Returns(_packageTypes);
-
-                packageReader
-                    .Setup(p => p.NuspecReader)
-                    .Returns(nuspecReader.Object);
-
-                return Task.FromResult(new DownloadResourceResult(Stream.Null, packageReader.Object));
-            }
         }
 
         private SourceRepositoryProvider CreateSource(List<SourcePackageDependencyInfo> packages)
