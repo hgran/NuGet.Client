@@ -23,6 +23,8 @@ using Xunit;
 using Strings = NuGet.ProjectManagement.Strings;
 using NuGet.ProjectManagement;
 using System.Diagnostics;
+using NuGet.Common;
+using NuGet.Commands;
 
 namespace NuGet.Test
 {
@@ -163,6 +165,9 @@ namespace NuGet.Test
                     deleteOnRestartManager);
                 var packagesFolderPath = PackagesFolderPathUtility.GetPackagesFolderPath(testSolutionManager, testSettings);
 
+                var installationCompatibility = new Mock<IInstallationCompatibility>();
+                nuGetPackageManager.InstallationCompatibility = installationCompatibility.Object;
+
                 var msBuildNuGetProject = testSolutionManager.AddNewMSBuildProject();
                 var msBuildNuGetProjectSystem = msBuildNuGetProject.MSBuildNuGetProjectSystem as TestMSBuildNuGetProjectSystem;
                 var packagesConfigPath = msBuildNuGetProject.PackagesConfigNuGetProject.FullPath;
@@ -183,11 +188,27 @@ namespace NuGet.Test
                 // Assert
                 // Check that the packages.config file exists after the installation
                 Assert.True(File.Exists(packagesConfigPath));
+
                 // Check the number of packages and packages returned by PackagesConfigProject after the installation
                 packagesInPackagesConfig = (await msBuildNuGetProject.PackagesConfigNuGetProject.GetInstalledPackagesAsync(token)).ToList();
                 Assert.Equal(1, packagesInPackagesConfig.Count);
                 Assert.Equal(packageIdentity, packagesInPackagesConfig[0].PackageIdentity);
                 Assert.Equal(msBuildNuGetProject.MSBuildNuGetProjectSystem.TargetFramework, packagesInPackagesConfig[0].TargetFramework);
+
+                // Ensure that installation compatibility was checked.
+                installationCompatibility.Verify(
+                    x => x.EnsurePackageCompatibility(
+                        msBuildNuGetProject,
+                        packageIdentity,
+                        It.IsAny<DownloadResourceResult>()),
+                    Times.Once);
+                installationCompatibility.Verify(
+                    x => x.EnsurePackageCompatibility(
+                        It.IsAny<NuGetProject>(),
+                        It.IsAny<INuGetPathContext>(),
+                        It.IsAny<IEnumerable<NuGetProjectAction>>(),
+                        It.IsAny<RestoreResult>()),
+                    Times.Never);
             }
         }
 
